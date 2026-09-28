@@ -10,7 +10,9 @@ from browser_harness.admin import ensure_daemon
 from browser_harness.helpers import cdp
 
 # Atomically read visible content and controls, preserving actual DOM node identity.
-READ_STATE = Path(__file__).with_name("snapshot.js").read_text()
+# Always pass an explicit encoding: snapshot.js is UTF-8, while Python on Windows defaults
+# to the ANSI code page (cp936 on a Chinese install), which cannot decode its "→" glyph.
+READ_STATE = Path(__file__).with_name("snapshot.js").read_text(encoding="utf-8")
 MARKER = f"(() => {{ const state={READ_STATE}; return state?.marker ?? null; }})()"
 
 class StalePage(ValueError):
@@ -86,7 +88,9 @@ class Browser:
         raise StalePage("Page did not settle")
 
     def fresh(self, page, action=None):
-        if action is not None and action["kind"] in {"click", "select"}:
+        if action is not None and action["kind"] in {"click", "select", "enter"}:
+            # Node-scoped mutations: the guard carries the field's value, so a stale Enter
+            # cannot submit a field whose contents changed since the decision.
             node = action["node"]
             if type(node) is not int:
                 return False
@@ -117,6 +121,22 @@ def fingerprint(state):
     return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
 
 
+def capture_screenshot(call, attempts=2):
+    """A screenshot for the inspector only. It must never fail a run.
+
+    The model decides from the structured element table, so a slow or busy renderer that
+    cannot answer Page.captureScreenshot in time should cost the picture, not the task.
+    """
+    for attempt in range(attempts):
+        try:
+            return call("Page.captureScreenshot", format="jpeg", quality=72)["data"]
+        except Exception:  # noqa: BLE001 - includes the harness's IPC response timeout
+            if attempt == attempts - 1:
+                return None
+            time.sleep(0.25)
+    return None
+
+
 def browser_operation(request):
     operation = request["operation"]
     session = request["session"]
@@ -137,6 +157,38 @@ def browser_operation(request):
         kind = action["kind"]
         if kind == "scroll":
             call("Input.dispatchMouseEvent", type="mouseWheel", x=550, y=650, deltaX=0, deltaY=action["delta"])
+        elif kind == "enter":
+            if type(action["node"]) is not int:
+                raise ValueError("Invalid observed node")
+            # Focus must land on the observed field before the key event, or Enter goes nowhere.
+            focused = evaluate("""(action => {
+              const e=window.__jevFast?.nodes.get(action.node);
+              if (!e?.isConnected || e.matches(':disabled') ||
+                  (('readOnly' in e) && e.readOnly) || e.getAttribute('aria-readonly')==='true' ||
+                  e.closest('[aria-disabled="true"],[inert]') ||
+                  !e.checkVisibility({checkOpacity:true,checkVisibilityCSS:true})) return null;
+              const r=e.getBoundingClientRect();
+              if (!r.width || !r.height) return null;
+              e.focus();
+              return document.activeElement===e || e.contains(document.activeElement);
+            })(""" + json.dumps(action) + ")")
+            if focused is not True:
+                raise StalePage("Field changed or cannot take focus. Observe again.")
+            # Chrome only fires a form submission for a real key sequence, not Input.insertText.
+            for event, extra in (
+                ("rawKeyDown", {}),
+                ("char", {"text": "\r", "unmodifiedText": "\r"}),
+                ("keyUp", {}),
+            ):
+                call(
+                    "Input.dispatchKeyEvent",
+                    type=event,
+                    key="Enter",
+                    code="Enter",
+                    windowsVirtualKeyCode=13,
+                    nativeVirtualKeyCode=13,
+                    **extra,
+                )
         elif kind != "wait":
             if type(action["node"]) is not int:
                 raise ValueError("Invalid observed node")
@@ -190,5 +242,7 @@ def browser_operation(request):
         raise StalePage("Document is navigating")
     info["fingerprint"] = fingerprint(info)
     if request.get("screenshot", True):
-        info["screenshot"] = call("Page.captureScreenshot", format="jpeg", quality=72)["data"]
+        shot = capture_screenshot(call)
+        if shot:
+            info["screenshot"] = shot
     return info
