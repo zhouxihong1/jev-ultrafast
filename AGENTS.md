@@ -49,5 +49,20 @@ checkout must fail in about a second and say which command fixes it. `jev_ultraf
 browser discovery and the dedicated-profile launch; its CDP probe must stay fast and must never
 start anything.
 
+## Never commit a credential
+
+`.env` is git-ignored and holds real keys; it never belongs in the repository. `scripts/check_secrets.py`
+scans the **staged** content (what the commit would actually contain) for credential shapes and refuses
+the commit. Enable it once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+`tests/test_no_secrets.py` runs the same patterns over every tracked file, and one of its tests plants a
+credential to prove the scanner still catches one - a scanner that reports nothing without a control is
+not evidence. No real credential belongs in `scripts/check_secrets.py` itself: a scanner holding the
+secret it looks for has already leaked it.
+
 Checks: `pytest -q`, `ruff check .`, `node --check jev_ultrafast/static/app.js`, `node --check jev_ultrafast/snapshot.js`.
 

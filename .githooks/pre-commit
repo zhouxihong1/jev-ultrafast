@@ -1,0 +1,18 @@
+#!/bin/sh
+# 提交闸门：拒绝把凭据写进仓库。 / Refuse to commit a credential.
+#
+# 启用方式（每个克隆都需要做一次）：
+#     git config core.hooksPath .githooks
+#
+# 扫描的是**暂存区**内容，也就是这次提交真正会写进去的东西；
+# 不是工作区，所以未 add 的文件不会误报。
+# 确属误报时用 `git commit --no-verify` 显式跳过，并在提交说明里写清原因。
+
+for candidate in ".venv/Scripts/python.exe" ".venv/bin/python" "python3" "python"; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+        exec "$candidate" scripts/check_secrets.py
+    fi
+done
+
+echo "pre-commit: 找不到 Python，跳过凭据检查。" >&2
+exit 0

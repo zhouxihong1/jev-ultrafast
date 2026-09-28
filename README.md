@@ -428,11 +428,13 @@ task.run_task("bing 上海天气", on_step=on_step)
 ## 11. 开发与测试
 
 ```bash
-python -m pytest -q                       # 173 项，全离线，无需浏览器和网络
+python -m pytest -q                       # 178 项，全离线，无需浏览器和网络
 python -m ruff check .
 node --check jev_ultrafast/static/app.js
 node --check jev_ultrafast/snapshot.js
 python -X utf8=0 -c "import jev_ultrafast"   # 模拟 cmd 的 cp936，防编码回归
+
+git config core.hooksPath .githooks       # 启用提交前的凭据闸门（每个克隆做一次）
 ```
 
 | 测试文件 | 覆盖什么 |
@@ -443,7 +445,23 @@ python -X utf8=0 -c "import jev_ultrafast"   # 模拟 cmd 的 cp936，防编码�
 | `test_enter_operation.py` | ENTER 动作空间、按键序列、截图容错 |
 | `test_ui.py` | 观察台 HTTP 接口、令牌、状态投影 |
 | `test_windows_encoding.py` | 用 `-X utf8=0` 子进程复现 cmd 环境 |
+| `test_no_secrets.py` | 凭据闸门；其中一个用例会**故意植入密钥**证明扫描器没失效 |
 | `test_preflight.py` / `test_chrome.py` / `test_selftest.py` | 预检、浏览器启停、零密钥自检 |
+
+### 凭据闸门
+
+`.env` 里装着真实密钥，它被 `.gitignore` 忽略，**任何时候都不该进仓库**。
+
+```bash
+git config core.hooksPath .githooks    # 启用一次即可
+python scripts/check_secrets.py        # 手动扫暂存区
+python scripts/check_secrets.py --all  # 扫全部已跟踪文件
+```
+
+扫描的是**暂存区**内容（这次提交真正会写进去的东西），命中就拒绝提交并指出文件与行号。
+确属误报时用 `git commit --no-verify` 跳过，并在提交说明里写清原因。
+
+`scripts/check_secrets.py` 里**不能出现真实密钥** —— 一个装着它所要查找的密钥的扫描器，本身就已经泄漏了。
 
 改代码时请遵守的约定（详见 `AGENTS.md`）：
 
