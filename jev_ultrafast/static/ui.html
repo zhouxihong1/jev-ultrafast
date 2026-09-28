@@ -1,0 +1,668 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="ui-token" content="__TOKEN__" />
+    <title>Jev Ultrafast · 运行观察台</title>
+    <style>
+      :root {
+        --bg: #0d1117;
+        --panel: #161b22;
+        --panel-2: #1c2129;
+        --line: #30363d;
+        --text: #e6edf3;
+        --muted: #8b949e;
+        --accent: #58a6ff;
+        --ok: #3fb950;
+        --warn: #d29922;
+        --bad: #f85149;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        --sans: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.55 var(--sans);
+        -webkit-font-smoothing: antialiased;
+      }
+      a { color: var(--accent); }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 14px 22px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+        position: sticky;
+        top: 0;
+        z-index: 30;
+        flex-wrap: wrap;
+      }
+      .brand { font-weight: 650; letter-spacing: -0.2px; }
+      .brand i { color: var(--muted); font-style: normal; }
+      .badge {
+        font: 11px/1 var(--mono);
+        padding: 5px 8px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--muted);
+      }
+      .spacer { flex: 1; }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font: 12px/1 var(--mono);
+        padding: 6px 11px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        white-space: nowrap;
+      }
+      .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+      .pill[data-s="running"] .dot, .pill[data-s="predicted"] .dot, .pill[data-s="ready"] .dot,
+      .pill[data-s="starting"] .dot { background: var(--accent); animation: pulse 1.1s infinite; }
+      .pill[data-s="done"] { border-color: #1f6f36; }
+      .pill[data-s="done"] .dot { background: var(--ok); }
+      .pill[data-s="blocked"], .pill[data-s="budget"], .pill[data-s="stopped"] { border-color: #7d5c14; }
+      .pill[data-s="blocked"] .dot, .pill[data-s="budget"] .dot, .pill[data-s="stopped"] .dot { background: var(--warn); }
+      .pill[data-s="error"], .pill[data-s="setup-required"] { border-color: #7d2b26; }
+      .pill[data-s="error"] .dot, .pill[data-s="setup-required"] .dot { background: var(--bad); }
+      @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+      .clock { font: 12px/1 var(--mono); color: var(--muted); }
+
+      main { padding: 20px 22px 60px; max-width: 1560px; margin: 0 auto; }
+      .grid { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+      .cols-2 { grid-template-columns: repeat(auto-fit, minmax(430px, 1fr)); }
+      .cols-top { grid-template-columns: minmax(340px, 420px) minmax(0, 1fr); }
+      @media (max-width: 1100px) { .cols-top { grid-template-columns: minmax(0, 1fr); } }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 15px 16px;
+        min-width: 0;
+      }
+      .card h2 {
+        margin: 0 0 12px;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        color: var(--muted);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .card h2 .hint { text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 11px; }
+      label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+      textarea, input[type="number"], input[type="text"] {
+        width: 100%;
+        background: #0b0f14;
+        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px 12px;
+        font: 14px/1.5 var(--sans);
+        resize: vertical;
+      }
+      textarea:focus, input:focus { outline: none; border-color: var(--accent); }
+      .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .row.gap { margin-top: 10px; }
+      button {
+        font: 13px/1 var(--sans);
+        padding: 9px 15px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        color: var(--text);
+        cursor: pointer;
+      }
+      button:hover:not(:disabled) { border-color: #4d5866; background: #232a33; }
+      button:disabled { opacity: 0.42; cursor: not-allowed; }
+      button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; font-weight: 600; }
+      button.primary:hover:not(:disabled) { background: #2a7ff5; border-color: #2a7ff5; }
+      button.danger { border-color: #7d2b26; color: #ffb4ad; }
+
+      .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+      .chip {
+        font: 12px/1 var(--mono);
+        padding: 6px 9px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+      }
+      .chip:hover { color: var(--text); border-color: var(--accent); }
+
+      dl.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 7px 14px; margin: 0; }
+      dl.kv dt { color: var(--muted); font-size: 12px; white-space: nowrap; }
+      dl.kv dd { margin: 0; font-family: var(--mono); font-size: 12px; word-break: break-all; }
+
+      .shot { position: relative; line-height: 0; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); background: #0b0f14; }
+      .shot img { width: 100%; display: block; }
+      .shot .empty { padding: 60px 20px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.6; }
+      .ov {
+        position: absolute;
+        border: 1.5px solid rgba(88, 166, 255, 0.75);
+        border-radius: 3px;
+        pointer-events: none;
+      }
+      .ov::after {
+        content: attr(data-n);
+        position: absolute;
+        top: -9px;
+        left: -1px;
+        font: 700 10px/1 var(--mono);
+        padding: 2px 4px;
+        border-radius: 3px;
+        background: var(--accent);
+        color: #06213f;
+      }
+      .ov.sel { border-color: var(--ok); box-shadow: 0 0 0 2px rgba(63, 185, 80, 0.3); }
+      .ov.sel::after { background: var(--ok); color: #04210c; }
+      .shot-meta { font: 11px/1.5 var(--mono); color: var(--muted); margin-top: 8px; word-break: break-all; }
+
+      table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+      th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid #22282f; vertical-align: top; }
+      th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+      tbody tr:hover { background: #1b2129; }
+      tbody tr.sel { background: rgba(63, 185, 80, 0.09); box-shadow: inset 2px 0 0 var(--ok); }
+      td.num, th.num { text-align: right; font-family: var(--mono); }
+      code, .mono { font-family: var(--mono); font-size: 12px; }
+      .tag {
+        display: inline-block;
+        font: 10px/1 var(--mono);
+        padding: 3px 5px;
+        border-radius: 3px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        margin-right: 4px;
+      }
+      .tag.on { border-color: #2a5d8f; color: #a5d0ff; }
+      .scroll { max-height: 320px; overflow: auto; }
+      pre.text {
+        margin: 0;
+        font: 12px/1.5 var(--mono);
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: #c9d1d9;
+        max-height: 300px;
+        overflow: auto;
+      }
+      .bar { display: grid; grid-template-columns: minmax(64px, max-content) minmax(0, 1fr) 52px; gap: 8px; align-items: center; margin-bottom: 5px; }
+      .bar .k { font: 11.5px/1.2 var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .bar .t { height: 7px; background: #0b0f14; border-radius: 4px; overflow: hidden; }
+      .bar .f { height: 100%; background: var(--accent); }
+      .bar.top .f { background: var(--ok); }
+      .bar .v { font: 11px/1 var(--mono); color: var(--muted); text-align: right; }
+      .muted { color: var(--muted); }
+      .ok { color: var(--ok); }
+      .bad { color: var(--bad); }
+      .warn { color: var(--warn); }
+      .checks { margin: 0; padding: 0; list-style: none; }
+      .checks li { padding: 9px 11px; border: 1px solid #7d2b26; border-radius: 8px; margin-bottom: 8px; background: rgba(248, 81, 73, 0.06); }
+      .checks .fix { color: var(--muted); font-size: 12px; margin-top: 4px; font-family: var(--mono); }
+      .empty-note { color: var(--muted); font-size: 13px; }
+      .pulse-line { height: 2px; background: linear-gradient(90deg, transparent, var(--accent), transparent); animation: slide 1.4s linear infinite; }
+      @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+      .hidden { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span class="brand">Jev Ultrafast <i>· 运行观察台</i></span>
+      <span class="badge" id="backend">backend …</span>
+      <span class="spacer"></span>
+      <span class="clock" id="clock">0.0s · 0 步</span>
+      <span class="pill" id="status" data-s="idle"><span class="dot"></span><span id="status-text">空闲</span></span>
+    </header>
+    <div class="pulse-line hidden" id="progress"></div>
+
+    <main class="grid">
+      <div class="grid cols-top">
+        <section class="card">
+          <h2>一句话指令 <span class="hint">回车即运行 · Ctrl+Enter 换行</span></h2>
+          <label for="instruction">要做什么</label>
+          <textarea id="instruction" rows="3" placeholder="例如：百度搜索 上海天气">__INSTRUCTION__</textarea>
+          <div class="chips" id="examples"></div>
+
+          <div class="row gap">
+            <button class="primary" id="run">运行</button>
+            <button id="plan">仅解析</button>
+            <button class="danger" id="stop" disabled>停止</button>
+          </div>
+
+          <details style="margin-top: 14px">
+            <summary class="muted" style="cursor: pointer; font-size: 12px">高级选项</summary>
+            <div class="row gap">
+              <div style="flex: 1; min-width: 120px">
+                <label for="steps">动作上限</label>
+                <input type="number" id="steps" min="1" max="200" value="20" />
+              </div>
+              <div style="flex: 1; min-width: 120px">
+                <label for="url">起始 URL（可空）</label>
+                <input type="text" id="url" placeholder="留空则从指令解析" />
+              </div>
+            </div>
+            <div class="row gap">
+              <label style="margin: 0"><input type="checkbox" id="keep_open" /> 结束后保留标签页</label>
+            </div>
+          </details>
+        </section>
+
+        <section class="card">
+          <h2>解析结果 <span class="hint">指令如何变成起点与目标</span></h2>
+          <div id="plan-body"><p class="empty-note">还没有指令。</p></div>
+          <div id="checks" class="hidden" style="margin-top: 14px"></div>
+        </section>
+      </div>
+
+      <section class="card hidden" id="error-card">
+        <h2>运行失败 <span class="hint">出错原因</span></h2>
+        <pre class="text bad" id="error-text"></pre>
+      </section>
+
+      <div class="grid cols-2">
+        <section class="card">
+          <h2>当前页面 <span class="hint" id="shot-hint"></span></h2>
+          <div class="shot" id="shot">
+            <div class="empty">运行后这里会显示浏览器里正在看的那一页，<br />并把编好号的可操作元素框出来。</div>
+          </div>
+          <div class="shot-meta" id="shot-meta"></div>
+        </section>
+
+        <section class="card">
+          <h2>最近一次决策 <span class="hint" id="decision-hint"></span></h2>
+          <div id="decision"><p class="empty-note">还没有决策。</p></div>
+        </section>
+      </div>
+
+      <section class="card">
+        <h2>可操作元素 <span class="hint" id="elements-hint"></span></h2>
+        <div class="scroll"><table id="elements">
+          <thead><tr><th class="num" style="width:44px">#</th><th style="width:96px">角色</th><th>名称</th><th>当前值</th><th style="width:190px">支持操作</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </section>
+
+      <div class="grid cols-2">
+        <section class="card">
+          <h2>动作日志 <span class="hint" id="actions-hint"></span></h2>
+          <div class="scroll"><table id="actions">
+            <thead><tr><th class="num" style="width:36px">步</th><th style="width:82px">操作</th><th>目标</th><th>输入文本</th><th class="num" style="width:52px">概率</th><th class="num" style="width:82px">累计</th></tr></thead>
+            <tbody></tbody>
+          </table></div>
+        </section>
+
+        <section class="card">
+          <h2>文本模型调用 <span class="hint">只有输入文字时才发生</span></h2>
+          <div class="scroll"><table id="texts">
+            <thead><tr><th>字段</th><th>生成的值</th><th style="width:150px">模型</th></tr></thead>
+            <tbody></tbody>
+          </table></div>
+        </section>
+      </div>
+
+      <section class="card hidden" id="result-card">
+        <h2>运行结果 <span class="hint">结束状态</span></h2>
+        <div id="result-body"></div>
+      </section>
+
+      <section class="card">
+        <h2>页面可见文本 <span class="hint">模型实际读到的内容（截断）</span></h2>
+        <pre class="text" id="page-text">—</pre>
+      </section>
+    </main>
+
+    <script>
+      const TOKEN = document.querySelector('meta[name="ui-token"]').content;
+      const $ = (id) => document.getElementById(id);
+      const EXAMPLES = [
+        "百度搜索 上海天气",
+        "bing 上海天气",
+        "打开 https://cn.bing.com 用搜索框搜索 上海天气 然后提交",
+        "wikipedia shanghai",
+        "打开 https://en.wikipedia.org/wiki/Main_Page 用搜索框搜索 Shanghai 然后提交",
+        "github search browser-harness",
+      ];
+      const STATUS_CN = {
+        idle: "空闲", starting: "启动中", ready: "已观察", predicted: "已决策",
+        running: "运行中", done: "完成", blocked: "受阻", budget: "达上限",
+        stopped: "已停止", error: "出错", "setup-required": "环境未就绪",
+      };
+      let timer = null;
+      let latest = {};
+
+      async function api(path, body) {
+        const options = body
+          ? { method: "POST", headers: { "Content-Type": "application/json", "X-UI-Token": TOKEN }, body: JSON.stringify(body) }
+          : {};
+        const response = await fetch(path, options);
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+        return payload;
+      }
+
+      function fmtMs(ms) {
+        if (!ms && ms !== 0) return "—";
+        return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`;
+      }
+      function esc(value) {
+        return String(value ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      }
+      function short(value, n) {
+        const text = String(value ?? "");
+        return text.length > n ? text.slice(0, n) + "…" : text;
+      }
+
+      function renderStatus(state) {
+        const status = state.status || "idle";
+        const pill = $("status");
+        pill.dataset.s = status;
+        $("status-text").textContent = STATUS_CN[status] || status;
+        $("progress").classList.toggle("hidden", !state.running);
+        $("run").disabled = !!state.running;
+        $("plan").disabled = !!state.running;
+        $("stop").disabled = !state.running;
+      }
+
+      function renderPlan(state) {
+        const plan = state.plan;
+        if (!plan) {
+          $("plan-body").innerHTML = '<p class="empty-note">还没有指令。</p>';
+          return;
+        }
+        const rows = [
+          ["起点 URL", plan.url],
+          ["来源", plan.source + (plan.engine ? ` · 引擎 ${plan.engine}` : "")],
+          ["关键词", plan.query ?? "—"],
+          ["目标（发给模型）", plan.goal],
+        ];
+        $("plan-body").innerHTML =
+          "<dl class='kv'>" +
+          rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("") +
+          "</dl>" +
+          (plan.notes && plan.notes.length
+            ? `<p class="muted" style="font-size:12px;margin:10px 0 0">注意：${esc(plan.notes.join("；"))}</p>`
+            : "");
+        const checks = state.checks || [];
+        const box = $("checks");
+        if (!checks.length) {
+          box.classList.add("hidden");
+          box.innerHTML = "";
+          return;
+        }
+        box.classList.remove("hidden");
+        box.innerHTML =
+          '<ul class="checks">' +
+          checks
+            .map((c) => `<li><b>${esc(c.check)}</b>：${esc(c.detail)}<div class="fix">修正：${esc(c.fix)}</div></li>`)
+            .join("") +
+          "</ul>";
+      }
+
+      function renderDecision(state) {
+        const d = state.decision;
+        $("decision-hint").textContent = d && d.model ? `由 ${d.model} 决定` : "";
+        if (!d) {
+          $("decision").innerHTML = '<p class="empty-note">还没有决策。</p>';
+          return;
+        }
+        const bars = (map, chosen, limit) => {
+          const entries = Object.entries(map || {}).sort((a, b) => b[1] - a[1]).slice(0, limit);
+          if (!entries.length) return '<p class="empty-note">—</p>';
+          return entries
+            .map(
+              ([key, value]) =>
+                `<div class="bar ${key === chosen ? "top" : ""}"><span class="k" title="${esc(key)}">${esc(short(key, 26))}</span>` +
+                `<span class="t"><span class="f" style="width:${Math.max(2, Math.round(value * 100))}%"></span></span>` +
+                `<span class="v">${(value * 100).toFixed(1)}%</span></div>`
+            )
+            .join("");
+        };
+        $("decision").innerHTML = `
+          <dl class="kv">
+            <dt>操作</dt><dd>${esc(d.operation)}</dd>
+            <dt>目标</dt><dd>${d.target == null ? "<span class='muted'>—（该操作不需要目标）</span>" : esc(d.target)}</dd>
+            <dt>置信度</dt><dd>${d.confidence == null ? "—" : (d.confidence * 100).toFixed(1) + "%"}${d.calls ? ` · ${d.calls} 次请求` : ""}</dd>
+            <dt>决策耗时</dt><dd>${fmtMs(d.latency_ms)}</dd>
+          </dl>
+          <h2 style="margin:14px 0 8px">操作概率</h2>${bars(d.operation_probabilities, d.operation, 8)}
+          <h2 style="margin:14px 0 8px">目标概率</h2>${bars(d.target_probabilities, d.target, 8)}`;
+      }
+
+      function renderShot(state) {
+        const page = state.page || {};
+        const src = page.screenshot;
+        const hint = $("shot-hint");
+        hint.textContent = state.elements && state.elements.length ? `${state.elements.length} 个元素` : "";
+        const box = $("shot");
+        if (!src) {
+          // A missed capture is cosmetic: keep the last picture rather than blanking the panel.
+          if (box.querySelector("img")) {
+            positionOverlay(state);
+          } else {
+            box.innerHTML = state.running
+              ? '<div class="empty">正在观察页面…</div>'
+              : '<div class="empty">运行后这里会显示浏览器里正在看的那一页，<br />并把编好号的可操作元素框出来。</div>';
+          }
+          $("shot-meta").textContent = [page.title, page.url].filter(Boolean).join("  ·  ");
+          return;
+        }
+        let img = box.querySelector("img");
+        if (!img) {
+          box.innerHTML = '<img alt="当前页面" /><div class="ov-layer"></div>';
+          img = box.querySelector("img");
+          img.addEventListener("load", () => positionOverlay(latest));
+        }
+        if (img.getAttribute("src") !== src) {
+          img.setAttribute("src", src);
+        } else {
+          positionOverlay(state);
+        }
+        $("shot-meta").textContent = [page.title, page.url].filter(Boolean).join("  ·  ");
+      }
+
+      function positionOverlay(state) {
+        const box = $("shot");
+        const img = box.querySelector("img");
+        const layer = box.querySelector(".ov-layer");
+        if (!img || !layer || !img.naturalWidth) return;
+        const scale = img.clientWidth / img.naturalWidth;
+        layer.innerHTML = "";
+        for (const element of state.elements || []) {
+          const r = element.rect;
+          if (!r || !r.w || !r.h) continue;
+          const div = document.createElement("div");
+          div.className = "ov" + (element.selected ? " sel" : "");
+          div.dataset.n = element.index;
+          div.style.left = r.x * scale + "px";
+          div.style.top = r.y * scale + "px";
+          div.style.width = r.w * scale + "px";
+          div.style.height = r.h * scale + "px";
+          layer.appendChild(div);
+        }
+      }
+
+      function renderElements(state) {
+        const body = $("elements").querySelector("tbody");
+        const elements = state.elements || [];
+        $("elements-hint").textContent = elements.length ? `${elements.length} 个` : "";
+        if (!elements.length) {
+          body.innerHTML = '<tr><td colspan="5" class="empty-note">还没有观察。</td></tr>';
+          return;
+        }
+        body.innerHTML = elements
+          .map(
+            (e) => `<tr class="${e.selected ? "sel" : ""}">
+              <td class="num">${esc(e.index)}</td>
+              <td class="mono">${esc(e.role || "—")}</td>
+              <td>${esc(short(e.label, 58))}</td>
+              <td class="mono muted">${esc(short(e.value, 26) || "—")}</td>
+              <td>${(e.operations || []).map((op) => `<span class="tag ${e.selected && op === state.decision?.operation ? "on" : ""}">${esc(op)}</span>`).join("")}</td>
+            </tr>`
+          )
+          .join("");
+      }
+
+      function renderActions(state) {
+        const body = $("actions").querySelector("tbody");
+        const actions = state.actions || [];
+        $("actions-hint").textContent = actions.length ? `${actions.length} 步` : "";
+        if (!actions.length) {
+          body.innerHTML = '<tr><td colspan="6" class="empty-note">还没有动作。</td></tr>';
+          return;
+        }
+        body.innerHTML = actions
+          .map(
+            (a) => `<tr>
+              <td class="num">${esc(a.step)}</td>
+              <td class="mono">${esc(a.operation || a.kind || "—")}</td>
+              <td>${esc(short(a.action, 52))}${a.page_changed === false ? ' <span class="tag">页面未变</span>' : ""}</td>
+              <td class="mono">${a.typed_text ? esc(short(a.typed_text, 40)) : '<span class="muted">—</span>'}</td>
+              <td class="num">${a.probability == null ? "—" : (a.probability * 100).toFixed(0) + "%"}</td>
+              <td class="num muted">${fmtMs(a.elapsed_ms)}</td>
+            </tr>`
+          )
+          .join("");
+      }
+
+      function renderTexts(state) {
+        const body = $("texts").querySelector("tbody");
+        const calls = state.text_calls || [];
+        if (!calls.length) {
+          body.innerHTML = '<tr><td colspan="3" class="empty-note">本次运行没有需要生成文本的步骤。</td></tr>';
+          return;
+        }
+        body.innerHTML = calls
+          .map(
+            (c) => `<tr><td>${esc(c.field)}</td><td class="mono">${esc(c.value)}</td><td class="mono muted">${esc(c.model)} · ${fmtMs(c.latency_ms)}</td></tr>`
+          )
+          .join("");
+      }
+
+      function renderOutcome(state) {
+        const errorBox = $("error-card");
+        if (state.error) {
+          errorBox.classList.remove("hidden");
+          $("error-text").textContent = state.error;
+        } else {
+          errorBox.classList.add("hidden");
+        }
+        const result = state.result;
+        const card = $("result-card");
+        if (!result) {
+          card.classList.add("hidden");
+          return;
+        }
+        card.classList.remove("hidden");
+        const rows = [
+          ["结束状态", STATUS_CN[result.status] || result.status],
+          ["动作步数", `${result.steps} 步`],
+          ["总耗时", fmtMs(result.elapsed_ms)],
+          ["最终地址", result.final_url || "—"],
+          ["最终标题", result.final_title || "—"],
+        ];
+        $("result-body").innerHTML =
+          "<dl class='kv'>" +
+          rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("") +
+          "</dl>";
+      }
+
+      function render(state) {
+        latest = state;
+        renderStatus(state);
+        renderPlan(state);
+        renderDecision(state);
+        renderShot(state);
+        renderElements(state);
+        renderActions(state);
+        renderTexts(state);
+        renderOutcome(state);
+        if (state.result && state.result.page_text) {
+          $("page-text").textContent = state.result.page_text;
+        } else if (state.page && state.page.text) {
+          $("page-text").textContent = state.page.text;
+        }
+        const elapsed = state.elapsed_ms || 0;
+        $("clock").textContent = `${(elapsed / 1000).toFixed(1)}s · ${state.steps || 0} 步`;
+      }
+
+      async function tick() {
+        try {
+          const state = await api("/api/state");
+          render(state);
+          schedule(state.running ? 600 : 1500);
+        } catch (error) {
+          schedule(3000);
+        }
+      }
+      function schedule(delay) {
+        clearTimeout(timer);
+        timer = setTimeout(tick, delay);
+      }
+
+      async function run() {
+        const instruction = $("instruction").value.trim();
+        if (!instruction) return;
+        $("page-text").textContent = "—";
+        try {
+          await api("/api/run", {
+            instruction,
+            url: $("url").value.trim() || null,
+            steps: Number($("steps").value) || null,
+            keep_open: $("keep_open").checked,
+          });
+          schedule(120);
+        } catch (error) {
+          $("checks").classList.remove("hidden");
+          $("checks").innerHTML = `<ul class="checks"><li><b>无法启动</b>：${esc(error.message)}</li></ul>`;
+        }
+      }
+
+      async function plan() {
+        try {
+          const { plan } = await api("/api/plan", { instruction: $("instruction").value.trim(), url: $("url").value.trim() || null });
+          renderPlan({ plan });
+        } catch (error) {
+          $("checks").classList.remove("hidden");
+          $("checks").innerHTML = `<ul class="checks"><li><b>指令无法解析</b>：${esc(error.message)}</li></ul>`;
+        }
+      }
+
+      $("examples").innerHTML = EXAMPLES.map(
+        (text) => `<button class="chip" type="button">${esc(text)}</button>`
+      ).join("");
+      $("examples").addEventListener("click", (event) => {
+        if (event.target.classList.contains("chip")) {
+          $("instruction").value = event.target.textContent;
+          plan();
+        }
+      });
+      $("run").addEventListener("click", run);
+      $("plan").addEventListener("click", plan);
+      $("stop").addEventListener("click", () => api("/api/stop", {}).then(() => schedule(120)));
+      $("instruction").addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.ctrlKey && !event.shiftKey) {
+          event.preventDefault();
+          run();
+        }
+      });
+      window.addEventListener("resize", () => api("/api/state").then(render).catch(() => {}));
+
+      api("/api/meta")
+        .then(({ config, backend }) => {
+          $("backend").textContent = `${backend} · ${config.jev.url.replace(/^https?:\/\//, "")}`;
+        })
+        .catch(() => {});
+      tick();
+    </script>
+  </body>
+</html>
