@@ -1,421 +1,453 @@
 <img src="docs/banner.svg" alt="Jev Ultrafast · Browser Use × TypeSafe" width="100%" />
 
-# Jev Ultrafast ⚡
+# Jev Ultrafast 中文教程
+
+> English: [README_en.md](README_en.md)
+
+> 本分支相对上游 `browser-use/jev-ultrafast` 的改动：可配置端点、一句话入口、实时观察台、`ENTER` 操作、Windows 编码修复，以及提交前的凭据闸门。
 
 > [!IMPORTANT]
 > **The Browser Use Cloud waitlist is open.** Get early access to ultrafast browser agents in the cloud.
 > **[Join the waitlist →](https://browser-use.com/ultrafast?utm_source=github&utm_medium=readme&utm_campaign=jev-ultrafast)**
 
-**A browser agent with a dynamic, indexed action space.**
+一句话：**把「百度搜索 上海天气」这句话丢给它，它自己开浏览器、自己判断下一步点什么，跑完把结果给你。**
 
-Give it one goal. [TypeSafe's Jev](https://docs.typesafe.ai/introduction) picks an operation and an element. A small LLM writes text only when the operation is `TYPE_TEXT`.
+决策由 TypeSafe 的 Jev 模型（`jev-1.13.0`）担，页面快照和操作执行由代码做。需要输入文字时才叫一个小语言模型（文本助手）生成值。截图只给人看，不参与决策。
 
-**Zürich → London on Google Flights in 7.1 seconds.** One natural-language goal, actual text generation, and loading waits included.
+---
 
-<a href="docs/demo.mp4"><img src="docs/demo.gif" alt="A real Google Flights search at 1× speed, with generated city names and dynamic operation/target decisions" width="100%" /></a>
+## 目录
 
-[Watch the MP4](docs/demo.mp4) · [Measurements](docs/performance.md) · [Read the loop](jev_ultrafast/agent.py)
+1. [它是什么，边界在哪](#1-它是什么边界在哪)
+2. [装环境](#2-装环境)
+3. [配置两个端点](#3-配置两个端点)
+4. [三步跑起来](#4-三步跑起来)
+5. [图形界面（观察台）](#5-图形界面观察台)
+6. [一句话能怎么写](#6-一句话能怎么写)
+7. [命令速查](#7-命令速查)
+8. [出问题怎么查](#8-出问题怎么查)
+9. [动作集](#9-动作集)
+10. [在 Python 里调用](#10-在-python-里调用)
+11. [开发与测试](#11-开发与测试)
 
-**中文用户请直接看：[中文教程](docs/中文教程.md)** — 从装环境、配端点、跑第一句话到排错，一份文档讲完。
+---
 
+## 1. 它是什么，边界在哪
 
-## The action space
+### 做成一件事的流程
 
-Every observation produces a new element table:
-
-```text
-[1] button    Change ticket type · Round trip
-[2] combobox  Where from?        · San Francisco
-[3] combobox  Where to?          · empty
-[4] textbox   Departure          · empty
-...
+```
+一句话  →  本地解析成「起点 URL + 目标」  →  观察页面（元素编号表）
+        →  Jev 选「哪个操作 + 哪个元素」  →  代码执行
+        →  需要打字时叫文本助手生成内容   →  重复，直到 DONE / BLOCKED / 到上限
 ```
 
-The operations are `CLICK`, `TYPE_TEXT`, `ENTER`, `SELECT`, `SCROLL_UP`, `SCROLL_DOWN`, `WAIT`, `DONE`, and `BLOCKED`. Only supported operations and targets are offered.
+关键点：**决策只基于结构化的元素表，不看截图**。截图是给观察台显示用的。
 
-`ENTER` exists because a lot of forms have no visible submit control: Bing's search button is a `0x0` hidden input and its visible affordance is a bare `<label>`, so typing into the box leaves nothing to click. Every editable field therefore also offers `ENTER`, which focuses the observed node and sends a real key sequence — `Input.insertText` alone does not trigger a form submission.
+### 能做的
 
-```text
-                      one TypeSafe request
-                     ┌───────────────────────────┐
-page → element table → operation                 │
-                     │ click_target              │
-                     │ type_text_target          │
-                     │ select_target, if present │
-                     └─────────────┬─────────────┘
-                         use the matching target
-                                   │
-                    CLICK [7] ─────┤──→ browser
-                TYPE_TEXT [3] ─────┘
-                          ↓
-                   small LLM → text → browser
-```
+| 能力 | 说明 |
+| --- | --- |
+| 一句话直达 | 从句子推断起点 URL（百度、必应、知乎、GitHub、维基…）与目标 |
+| 真实浏览器 | 走 CDP 驱动本机 Chrome，不是无头爬虫，页面真实渲染 |
+| 表单交互 | 点击、输入、回车提交、下拉选择 |
+| 可观察 | 每一步的候选元素、操作概率、目标概率、实际动作都留痕 |
+| 可定位故障 | 环境不对时约 1 秒内报错并给出修复命令，不会挂 30 秒超时 |
 
-Target questions are speculative. If the operation is `CLICK`, only `click_target` can execute. Two decisions, **one network round trip**. Each target head contains only compatible elements. Native dropdown choices carry an observed element/option index.
+### 做不到的（重要）
 
-There are no site-specific action scripts or prepared field strings in the policy. The Flights example supplies a goal and independently verifies the outcome. The screenshot renderer adds labels afterward; it does not drive the browser.
+| 限制 | 表现 |
+| --- | --- |
+| 验证码过不去 | 百度对全新 profile 必弹「百度安全验证」，模型会**正确报 `blocked`**，不会硬撞 |
+| 无图形界面即无截图 | 截图依赖 renderer，繁忙时可能抓不到（不影响任务） |
+| 不处理 iframe / shadow DOM / canvas / 文件上传 / 新标签页 | 这些元素不在快照里 |
+| 靠「长按 / 组合键 / 悬停菜单」交互的控件 | 动作集里没有 |
+| 一个页面元素超过 250 个 | 超出部分被截断 |
 
-## Try it
+---
+
+## 2. 装环境
+
+### 方式一：脚本（推荐）
 
 ```bash
-git clone https://github.com/browser-use/jev-ultrafast.git
 cd jev-ultrafast
-uv sync
-cp .env.example .env
-# Add TYPESAFE_API_KEY and TEXT_MODEL_API_KEY.
-uv run jev
+bash scripts/setup_venv.sh              # Git Bash / macOS / Linux
 ```
 
-Open **http://127.0.0.1:8766** and click **Start demo → Run automatically**. The inspector shows numbered elements, operation probabilities, target probabilities, and executed actions. **Choose next** pauses before execution.
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup_venv.ps1   # PowerShell
+```
 
-Prefer a plain venv over `uv`? `bash scripts/setup_venv.sh` does the same install into `.venv` and runs `jev-doctor` at the end. See [Reproducible environment](#reproducible-environment).
+脚本会建 `.venv`、装依赖、把 `.env.example` 复制成 `.env`（若不存在）、以可编辑模式装本包，最后跑一次 `jev-doctor`。
 
-Chrome connects through [Browser Harness](https://github.com/browser-use/browser-harness), installed by `uv sync`. Run `uv run browser-harness --doctor` if it needs connecting. Allow remote debugging in Chrome when prompted.
+常用开关：
 
-`TEXT_MODEL_API_KEY` is an OpenRouter key in the example configuration. The current demo uses `inception/mercury-2.5` with reasoning disabled. Gemini, GLM, and DeepSeek can also use the OpenAI-compatible text helper; configure the appropriate model, endpoint, and reasoning setting.
+| 开关（Bash / PowerShell） | 作用 |
+| --- | --- |
+| 无 / 无 | 装运行 + 开发依赖（含 pytest、ruff） |
+| `--no-dev` / `-NoDev` | 只装运行依赖 |
+| `--exact` / `-Exact` | 严格按 `requirements.lock.txt` 装，用于复现同一环境 |
+| `--recreate` / `-Recreate` | 删掉 `.venv` 重建 |
+| `--mirror URL` / `-Mirror URL` | 换 PyPI 镜像 |
 
-## Before the first real run
+> **注意**：`browser-harness==0.1.13` 只在 `pypi.org` 上有，清华源停在 `0.0.1`。
+> 用镜像装不上时，加 `--mirror https://pypi.org/simple`。
 
-Two things stop a fresh checkout: Chrome is not exposing CDP, and `.env` has no keys. Both are checked in about a second, and each failure reports the command that fixes it.
+### 方式二：手动
 
 ```bash
-jev-doctor
+python -m venv .venv
+source .venv/Scripts/activate          # Git Bash
+.venv\Scripts\activate.bat             # cmd
+.venv\Scripts\Activate.ps1             # PowerShell
+pip install -e .
 ```
 
-```text
-ready = False
-  BAD jev endpoint -> .../v1/systemone (model jev-latest) - TYPESAFE_API_KEY is not set
-  BAD text model endpoint -> .../chat/completions (model inception/mercury-2.5) - TEXT_MODEL_API_KEY is not set
-  OK  browser (CDP) -> Chrome/144.0.7559.110 at http://127.0.0.1:9333
-```
+---
 
-**1. Give it a browser it can drive.** A Chrome started the normal way exposes no CDP endpoint, and recent Chrome versions refuse remote debugging on the default profile. `jev-browser` launches a dedicated profile on its own port and remembers it:
+## 3. 配置两个端点
 
-```bash
-jev-browser start              # opens a browser window on a dedicated profile
-jev-browser start --headless
-jev-browser status
-jev-browser stop
-```
+所有配置都在项目根目录的 **`.env`** 里（已被 `.gitignore` 忽略，不会进仓库）。优先级：**环境变量 > 服务预设 > 内置默认**。
 
-The CDP origin is saved to `~/.jev/browser.json`, so nothing has to be exported: `jev-run` picks it up on its own. Set `BU_CDP_URL` yourself only to drive a browser you started another way.
+### 3.1 决策端点：选一个协议
 
-**2. Pick a decision backend — the Jev endpoint needs no key.**
+| 协议 | 端点 | 要密钥吗 | 一次决策几个请求 |
+| --- | --- | --- | --- |
+| `classifier`（默认，推荐起步） | `https://classifier.dev/` | **不要** | 1 个；当选中操作有多个候选元素时 2 个 |
+| `typesafe` | `{base}/v1/systemone` | 要 | 1 个，两个 head 一次返回 |
 
-`classifier.dev` serves the same model (`jev-1.13.0`, provider typesafe) behind a plain classification facade, and anonymous traffic is accepted. It is the default:
+两者是**同一个模型**（classifier.dev 的响应里写着 `"model": "jev-1.13.0"`、`"provider": "typesafe"`），只是线上格式不同。
 
-```bash
+免密钥起步：
+
+```dotenv
 JEV_BACKEND=classifier
 CLASSIFIER_URL=https://classifier.dev/
 ```
 
-One caveat that is not obvious: anonymous use only works over a **direct connection**. Arriving through a proxy the API answers `{"code":"proxy_requires_payment"}`, so this endpoint deliberately ignores `HTTP_PROXY`/`HTTPS_PROXY` unless `CLASSIFIER_USE_ENV_PROXY=1` is set.
+> **必须直连**。classifier.dev 的免费额度只认直连流量，走代理会返回
+> `{"code":"proxy_requires_payment"}`。所以这个端点**故意忽略 `HTTP_PROXY`/`HTTPS_PROXY`**，
+> 除非你显式设 `CLASSIFIER_USE_ENV_PROXY=1`（那需要付费 key）。
 
-The native `/v1/systemone` protocol is still supported and answers both heads in one request instead of two:
+有 TypeSafe key 时：
 
-```bash
+```dotenv
 JEV_BACKEND=typesafe
-TYPESAFE_API_KEY=...
+TYPESAFE_API_KEY=你的key
+TYPESAFE_MODEL=jev-latest
+# TYPESAFE_BASE_URL=https://api.typesafe.ai
+# TYPESAFE_PATH=/v1/systemone
 ```
 
-**3. Check that the endpoint is not just configured, but answering:**
+### 3.2 文本助手端点
+
+只有需要「输入文字」的步骤才会调用。任何 OpenAI 兼容的 `/chat/completions` 服务都行。
+
+```dotenv
+TEXT_MODEL_BASE_URL=https://api.deepseek.com/v1
+TEXT_MODEL_API_KEY=sk-xxxx
+TEXT_MODEL=deepseek-chat
+TEXT_MODEL_REASONING=off          # none | off | low | medium | high | 原始 JSON
+TEXT_MODEL_JSON_MODE=auto         # auto | on | off，服务不认 response_format 时设 off
+```
+
+内置预设可以直接用 `TEXT_MODEL_PROVIDER`：
+
+`openrouter` `openai` `deepseek` `siliconflow` `dashscope` `moonshot` `zhipu` `ollama` `vllm` `lmstudio`
+
+本地模型（免密钥）：
+
+```dotenv
+TEXT_MODEL_PROVIDER=ollama
+TEXT_MODEL_BASE_URL=http://127.0.0.1:11434/v1
+TEXT_MODEL=qwen2.5:7b
+```
+
+### 3.3 验证端点
 
 ```bash
-jev-doctor --live
+jev-doctor          # 看生效配置 + 是否就绪（每个失败项都带修复命令）
+jev-doctor --live   # 额外给每个端点发一次最小真实请求
 ```
 
-`--live` makes one minimal real call per endpoint and prints what came back. Configured is not the same as working, and this is the difference:
+**「配置正确」不等于「能用」。** 我们实测遇到过一个网关：`GET /v1/models` 返回 200 正常，但每次对话请求都在 50ms 内返回 `HTTP 500 do_request_failed`。只有 `--live` 能发现这种问题。
 
-```text
-  x text_model: HTTP 500: {"error":{"code":"do_request_failed"}}
-  live jev -> jev-1.13.0 answered 'a'
-```
+---
 
-**4. Prove the stack locally.**
+## 4. 三步跑起来
 
 ```bash
-jev-selftest                      # both endpoints mocked: no key, no external site, no cost
-jev-selftest --real-decision      # live classifier.dev for decisions, local page + stub text helper
+# 1. 给它一个能被驱动的浏览器
+jev-browser start              # 弹一个专用 profile 的 Chrome 窗口
+jev-browser start --headless   # 不想看到窗口就用这个
+
+# 2. 零密钥自证整条链路（不花钱、不碰外部网站）
+jev-selftest
+
+# 3. 跑一句真的
+jev-run "bing 上海天气"
 ```
 
-`jev-selftest` starts a mock Jev endpoint, a mock text-model endpoint and a local page, then drives the real browser through type → submit → done. It starts a browser itself when none is reachable. Run it before blaming your keys: a passing run is proof that this machine's half of the stack works. `--real-decision` replaces only the decision endpoint, which is how to tell *which* half is at fault.
+`jev-selftest` 会自己起两个 mock 端点 + 一个本地页面，驱动真实浏览器走完「输入 → 提交 → 完成」。**先跑它，再怀疑你的密钥** —— 9 项全过就说明这台机器上除了外部服务以外都是好的。
 
-```text
-  [PASS] custom Jev endpoint used
-  [PASS] Jev bearer + extra header
-  [PASS] custom text endpoint used
-  [PASS] text bearer + extra header
-  [PASS] model name + reasoning sent
-  [PASS] loop reached the page
-  [PASS] typed value came from the mock LLM
-  [PASS] goal completed on the real page
-  [PASS] status is done
+想只验决策端点、页面和文本助手仍用本地桩：
+
+```bash
+jev-selftest --real-decision
 ```
 
-## The two decision backends
+### 为什么需要 `jev-browser`
 
-| | `classifier` | `typesafe` |
-| --- | --- | --- |
-| Endpoint | `https://classifier.dev/` | `{base}/v1/systemone` |
-| Key | none required | required |
-| Wire format | `{input, labels}` → `{label, scores}` | `{model, state, questions}` → `{answers}` |
-| Requests per decision | one, plus one more when the chosen operation has several candidate elements | one, all heads at once |
-| Model | `jev-1.13.0` | `jev-1.13.0` (or whatever `TYPESAFE_MODEL` names) |
+自己 `chrome.exe` 起一个浏览器是没有 CDP 端口的；新版 Chrome 又禁止在默认 profile 上开远程调试。`jev-browser` 用**独立 profile + 独立端口（9333）**启动，并把地址记到 `~/.jev/browser.json`，之后 `jev-run` 自动读取，**你不需要 export 任何变量**。
 
-The classifier takes a single string and returns a single label, so the operation and its target become two calls, and a target with only one candidate costs nothing. Because a bare index means nothing as a label, each label carries its own description — `3 | [3] button "Find stays"` — which is what makes target selection accurate.
+```bash
+jev-browser status    # 是否可达、用哪个二进制、哪个 profile、端口/PID
+jev-browser stop
+jev-browser restart
+```
 
-Model call costs, measured on a local fixture page: **2 calls, 8.7 s, 2 steps** for type → submit → done with the live classifier, at roughly 800 tokens per decision.
+---
 
-## Watch it run
+## 5. 图形界面（观察台）
 
-The command line returns JSON, which is the wrong shape for seeing what happened. `jev-ui` serves a live inspector on loopback: type a sentence, press Enter, and watch the decisions land.
+命令行返回 JSON，不适合「看过程」。观察台是本机网页：
 
 ```bash
 jev-ui --open --launch-browser
 ```
 
-![The inspector after a Bing search](docs/ui-screenshot.png)
+默认 `http://127.0.0.1:8788`。在输入框里打一句话回车即运行。
 
-Six panels, all updating while the loop runs:
+![观察台](docs/ui-screenshot.png)
 
-| Panel | What it shows |
+| 面板 | 看什么 |
 | --- | --- |
-| 解析结果 | The start URL and the goal the sentence became, plus the default-engine note when a sentence named none |
-| 当前页面 | The browser's own screenshot with every indexed element boxed and numbered; the chosen target is outlined in green |
-| 最近一次决策 | Operation, target, confidence, latency, and the probability bars for both heads |
-| 可操作元素 | The numbered table the model actually chose from, with each element's available operations |
-| 动作日志 | Every executed step: operation, target, generated text, probability, running total |
-| 文本模型调用 | Which field got which generated value, from which model, in how long |
+| 解析结果 | 这句话被解析成了什么起点 URL 和什么目标；没点名引擎时的假设也写在这 |
+| 当前页面 | 浏览器真实截图，**每个元素按编号框出来**，被选中的目标描绿框 |
+| 最近一次决策 | 操作、目标、置信度、耗时，以及「操作概率」和「目标概率」两组条形图 |
+| 可操作元素 | 模型实际从中挑选的编号表，每行标注这个元素支持哪些操作 |
+| 动作日志 | 每一步：操作 / 目标 / 生成的文本 / 概率 / 累计耗时 |
+| 文本模型调用 | 哪个字段生成了什么值、用哪个模型、花了多久 |
 
-The page is served with a per-process token and only accepts loopback requests. Screenshots are for the inspector only — the model still decides from the structured element table — and a screenshot that times out costs the picture, not the run.
-
-Other options:
+其它参数：
 
 ```bash
-jev-ui --port 8790 --instruction "百度搜索 上海天气"   # pre-fill the box
-jev-ui --launch-browser --headless                    # no visible window
+jev-ui --port 8790 --instruction "百度搜索 上海天气"   # 预填输入框
+jev-ui --launch-browser --headless                    # 不弹可见窗口
 ```
 
-## Run it one sentence at a time
-
-`jev-run` turns a short instruction into a start URL plus a goal, runs the loop, and returns JSON. The sentence is parsed locally — no extra model call decides the entry point. The environment is checked first, so a missing key or an undrivable browser fails in about a second with the fix, rather than a slow, opaque timeout.
-
-```bash
-jev-run "百度搜索 上海天气"
-jev-run "打开 example.com/pricing 把三个套餐名字列出来" --json
-jev-run "google latest llm benchmarks" --steps 10
-jev-run "百度搜索 上海天气，然后打开第一条结果"     # the clause after 然后 becomes extra goal text
-jev-run "..." --plan-only                          # print the parsed plan, no browser, no API call
-```
-
-Supported entry points, in the order they are tried:
-
-| Sentence looks like | Start URL |
-| --- | --- |
-| contains `http(s)://…` | that URL, the rest of the sentence becomes the goal |
-| `打开 example.com` / `open example.com` | `https://example.com` |
-| `<engine> <verb> <query>` — `百度搜索 上海天气`, `在知乎搜索 X`, `github search Y` | that engine's results URL for `query` |
-| `<verb> <query>` with no engine — `搜索 上海天气` | `JEV_DEFAULT_SEARCH_ENGINE`, default baidu |
-| `<engine> <query>` with no verb — `google latest llm benchmarks` | that engine's results URL |
-| anything else | a baidu search for the whole sentence, with a note in `plan.notes` |
-
-Engines: baidu, google, bing, sogou, so (360), duckduckgo, zhihu, weibo, bilibili, taobao, jd, github, youtube, wikipedia. Unnamed engines never get picked silently: `plan.notes` records what was assumed.
-
-The same entry point is available from Python, and over HTTP for callers in other languages:
-
-```python
-from jev_ultrafast import run_task
-
-result = run_task("百度搜索 上海天气")
-print(result["status"], result["steps"], result["page"]["text"][:400])
-```
-
-```bash
-jev-serve --port 8787                   # token printed on start, or pass JEV_SERVE_TOKEN
-curl -X POST http://127.0.0.1:8787/run \
-  -H 'Authorization: Bearer <token>' -H 'Content-Type: application/json' \
-  -d '{"instruction": "百度搜索 上海天气"}'
-```
-
-`GET /health` returns the resolved configuration. `POST /run` takes `instruction`, plus optional `url`, `goal`, `steps`, `text_limit`, `screenshots`. One run at a time; concurrent calls get `409`.
-
-## Point it at your own endpoints
-
-No provider host is hardcoded in the loop. `jev_ultrafast/config.py` resolves both endpoints, so a proxy, a gateway, an Azure deployment, or an offline vLLM box is a configuration change rather than a patch.
-
-```bash
-# Which protocol the decision step speaks
-JEV_BACKEND=classifier                                # classifier | typesafe
-
-# classifier.dev: keyless, direct connection only
-CLASSIFIER_URL=https://classifier.dev/
-CLASSIFIER_TIER=fast
-CLASSIFIER_MAX_INPUT=24000                            # page text is trimmed to fit
-CLASSIFIER_USE_ENV_PROXY=0                            # a proxy needs a funded key
-
-# The native Jev decision endpoint
-TYPESAFE_URL=https://gateway.internal/jev/decide      # absolute override
-# or
-TYPESAFE_BASE_URL=https://gateway.internal            # + TYPESAFE_PATH=/v1/systemone
-TYPESAFE_MODEL=jev-latest
-TYPESAFE_EXTRA_HEADERS={"X-Org":"team-a"}
-
-# The TYPE_TEXT helper, any OpenAI-compatible /chat/completions server
-TEXT_MODEL_PROVIDER=deepseek                          # preset: openrouter openai deepseek
-                                                      # siliconflow dashscope moonshot zhipu
-                                                      # ollama vllm lmstudio
-TEXT_MODEL_URL=https://x.openai.azure.com/openai/deployments/y/chat/completions?api-version=2024-06-01
-TEXT_MODEL_AUTH_STYLE=api-key                         # bearer | api-key | x-api-key | none
-TEXT_MODEL_JSON_MODE=off                              # for servers that reject response_format
-TEXT_MODEL_REASONING=none                             # none | off | low | medium | high | JSON
-```
-
-Resolution order is always: explicit environment variable → provider preset → built-in default. `jev-doctor` prints the effective result, whether the machine is ready, and `--live` proves the endpoints answer:
-
-```bash
-jev-doctor          # python, versions, both endpoints, key presence, CDP status, readiness
-jev-doctor --live   # plus one minimal real call to each endpoint
-jev-doctor --json
-```
-
-The full variable list is in `.env.example` and [docs/configuration.md](docs/configuration.md).
-
-Prove the wiring without spending a token: `jev-selftest` (or `scripts/e2e_check.py`, which it wraps) starts a mock Jev endpoint, a mock text-model endpoint and a local page, points both environment variables at them, and drives a real browser through type → submit → done. It asserts the mocked hosts were actually used, so a passing run means the override works rather than that it was ignored.
-
-```bash
-jev-selftest
-```
-
-## Reproducible environment
-
-`uv sync` remains the fastest path. For a plain venv that a second machine can rebuild byte-for-byte:
-
-```bash
-bash scripts/setup_venv.sh --exact            # Git Bash / macOS / Linux
-powershell -ExecutionPolicy Bypass -File scripts/setup_venv.ps1 -Exact
-```
-
-| Flag | Effect |
-| --- | --- |
-| *(none)* | dev environment: `requirements-dev.txt` (runtime + pytest + ruff) |
-| `--no-dev` / `-NoDev` | runtime only, from `requirements.txt` |
-| `--exact` / `-Exact` | install the pinned graph from `requirements.lock.txt` |
-| `--recreate` / `-Recreate` | delete and rebuild `.venv` |
-| `--mirror URL` / `-Mirror URL` | use a PyPI mirror |
-
-The script creates `.venv`, installs, copies `.env.example` to `.env` if absent, installs the package in editable mode, and finishes by running `jev-doctor`. `requirements.lock.txt` pins the full transitive graph; regenerate it with `python -m pip freeze | grep -v '^-e '`. The offline suite is 173 tests and needs no browser and no network:
-
-```bash
-pytest -q
-ruff check .
-```
-
-
-## Use the library
-
-```python
-from jev_ultrafast import Agent
-
-with Agent(
-    "https://www.google.com/travel/flights?hl=en",
-    "Find one-way flights from Zurich to London on September 20, 2026, "
-    "for one adult in economy. Stop when matching flight options are visible.",
-) as agent:
-    for state in agent.run():
-        print(state["elapsed_ms"], state["status"])
-```
-
-Run with `uv run --env-file .env python your_script.py`. The same policy can run a different task:
-
-```bash
-uv run --env-file .env python examples/run.py \
-  --url https://en.wikipedia.org/wiki/Main_Page \
-  --goal 'Find and open the Wikipedia article about Gödel’s incompleteness theorems.'
-```
-
-`uv run --env-file .env python examples/flights.py --keep-open` performs the flight search, checks the actual route/date/results, and saves its trace. It does not select or book a flight.
-
-## Why it moves
-
-- **One request per decision cycle.** Operation and target heads share the same observed state.
-- **No screenshots in the default agent loop.** Jev consumes structured state. The inspector opts into screenshots; the video uses a separate continuous screencast.
-- **One browser call per snapshot.** Read visible controls, their names, values, and text atomically. Keep references to the actual DOM nodes.
-- **Validate the selected target.** Clicks check the document, form values, target, and nearby context. Animation alone does not force another prediction. Resolve current geometry and reject covered controls before input.
-- **Wait for useful state.** After typing into a combobox, wait for visible suggestions, capped at 200 ms. Other interactions get at most two animation frames or 50 ms. These reads happen after execution is logged.
-- **Keep hidden tabs rendering.** Focus emulation prevents background animation throttling without switching Chrome's visible tab.
-- **Send visible text.** Offscreen article bodies and footers do not fill the model context.
-- **Reuse an interrupted text request.** A generated value survives a stale-page retry only if the entire text-helper input is unchanged.
-
-Every executed target is resolved from an observed node. The executor rechecks page freshness and click occlusion. Model output never becomes selectors, coordinates, shell commands, or executable JavaScript. Text-helper output must parse as a small JSON object before typing.
-
-## Small enough to read
-
-| File | Job |
-| --- | --- |
-| [agent.py](jev_ultrafast/agent.py) | The complete loop and text-helper handoff |
-| [snapshot.js](jev_ultrafast/snapshot.js) | Atomic DOM snapshot, indexed controls, freshness guards |
-| [browser.py](jev_ultrafast/browser.py) | Browser connection, current geometry, execution |
-| [model.py](jev_ultrafast/model.py) | Dynamic operation/target heads and text generation |
-| [config.py](jev_ultrafast/config.py) | Every endpoint, credential, and timeout, in one place |
-| [chrome.py](jev_ultrafast/chrome.py) | Find, launch, and stop a Chrome that CDP can drive |
-| [task.py](jev_ultrafast/task.py) | One sentence → start URL + goal → finished run |
-| [cli.py](jev_ultrafast/cli.py) | `jev-run`, `jev-ui`, `jev-browser`, `jev-selftest`, `jev-doctor`, `jev-serve` |
-| [ui.py](jev_ultrafast/ui.py) | Live inspector: the JSON API the page polls |
-| [selftest.py](jev_ultrafast/selftest.py) | Mock endpoints that prove the stack without a key |
-| [questions.py](jev_ultrafast/questions.py) | Model instructions |
-| [demo.py](jev_ultrafast/demo.py) | Local inspector |
-
-## Evidence and limits
-
-The current video is a **7,073 ms** Google Flights run. Timing starts after initial page observation and includes model calls, generated text, browser work, stale decisions, and loading waits. A fresh independent check verifies the one-way setting, Zürich, London, September 20, 2026, and visible flight options. The video plays at 1×, with no opening hold and a 0.5-second final hold.
-
-In six alternating runs with identical models and settings, both versions passed **3/3**. Median task time went from **9.450 s → 7.092 s**, a **25% reduction**; median browser protocol calls went from **1,092 → 101**. This is three repeats of one task on one browser profile, not a general reliability benchmark.
-
-The same policy opened the requested Wikipedia article in **2.798 s** and passed a local hotel search/filter task in **1.896 s**. Runs, failures, source hashes, and measurement boundaries are in [performance.md](docs/performance.md).
-
-A `DONE` choice still requires independent outcome verification. The DOM reader handles common HTML and ARIA controls, not the full accessible-name specification. Shadow roots, frames, canvas, uploads, pop-up tabs, nested scrolling, and arbitrary keyboard widgets remain outside this MVP. Owned tabs share the existing Chrome profile.
-
-### Verified runs
-
-Both endpoints live (`classifier.dev` for decisions, an OpenAI-compatible gateway for text), dedicated headless Chrome:
-
-| Task | Result |
-| --- | --- |
-| Local form: type a city, submit | `done`, 2 steps, 9.4 s |
-| `en.wikipedia.org` → search "Shanghai" | `done`, 2 steps, 23.4 s, landed on the article |
-| `cn.bing.com` → search "上海天气", submit | `done`, 2 steps: `TYPE_TEXT` then `ENTER` at p=1.0, landed on the results page |
-| `github search browser-harness` | `done` on the results page |
-| `百度搜索 上海天气` | `blocked` — Baidu serves `百度安全验证` to a fresh profile |
-
-`ENTER` measured directly: type `上海天气` into Bing's box, then press Enter on the observed
-field → `https://cn.bing.com/search?q=上海天气`, title `上海天气 - 搜索`.
-
-### Search engines are not equally automatable
-
-Measured on a fresh dedicated profile with the live classifier backend. The model behaviour is correct in every case; the site decides the outcome:
-
-| Sentence | Result |
-| --- | --- |
-| `github search browser-harness` | `done` on the results page |
-| `bing 上海天气` | `done` |
-| `sogou 上海天气` | `blocked` after 2 actions |
-| `duckduckgo shanghai weather` | `blocked` (consent interstitial) |
-| `百度搜索 上海天气` | `blocked` — Baidu redirects to `wappass.baidu.com/.../captcha`, "百度安全验证" |
-
-A challenge page is reported as `blocked`, not as a wrong action: the loop will not click through a captcha. For Baidu, run headful rather than `--headless`, reuse a browser profile that already has a session, or point `JEV_DEFAULT_SEARCH_ENGINE` at an engine that answers automation.
-
-## Development
-
-```bash
-uv run ruff check .
-uv run pytest
-node --check jev_ultrafast/static/app.js
-node --check jev_ultrafast/snapshot.js
-uv build
-```
-
-Tests are offline. `uv run python scripts/check_guards.py` checks real controls in a local browser without model calls. `scripts/e2e_check.py` drives a real browser through both overridable endpoints using `scripts/mock_provider.py`, so it needs Chrome but no credentials. Live examples and recording scripts make paid API calls. `scripts/record_flights.py <new-folder>` captures original browser timestamps; `scripts/render_demo.py <recording-folder>` renders that verified run at 1× and crops out the Google account strip. Credentials and raw traces stay ignored.
+安全：只监听回环地址，每次 POST 都要带页面里的进程内令牌，只接受本机请求。
 
 ---
 
-[Browser Use](https://github.com/browser-use/browser-use) · [Browser Harness](https://github.com/browser-use/browser-harness) · [TypeSafe speculative fan-out](https://docs.typesafe.ai/patterns/fan-out)
+## 6. 一句话能怎么写
+
+解析在**本地**做，不消耗模型调用。按下面的顺序尝试匹配：
+
+| 句子长什么样 | 起点 URL |
+| --- | --- |
+| 句子里含 `http(s)://…` | 用这个 URL，句子剩下的部分当目标 |
+| `打开 example.com` / `open example.com` | `https://example.com` |
+| `<引擎> <动词> <关键词>`：`百度搜索 上海天气`、`在知乎搜索 咖啡`、`github search llm` | 该引擎的结果页 |
+| `<动词> <关键词>`，没点名引擎：`搜索 上海天气` | `JEV_DEFAULT_SEARCH_ENGINE`，默认 baidu |
+| `<引擎> <关键词>`：`bing 上海天气`、`google llm benchmarks` | 该引擎的结果页 |
+| 以上都不匹配 | 用默认搜索引擎搜整句话 |
+
+支持的引擎别名：`百度` `bing` `必应` `google` `谷歌` `搜狗` `360` `so` `duckduckgo` `知乎` `微博` `bilibili` `淘宝` `京东` `github` `youtube` `wikipedia` `维基`
+
+几点实测行为：
+
+- `百度搜索` 这种**只有引擎没有关键词**的，会直接报错让你补关键词，而不是瞎搜一个字。
+- `bing 上海天气` 的关键词是「上海天气」，不会变成「海天气」。
+- 没点名引擎时会在 `plan.notes` 里写明「按默认引擎搜整句」，不会偷偷替你选。
+- 想看解析结果而不启动浏览器：`jev-run "…" --plan-only`
+
+---
+
+## 7. 命令速查
+
+| 命令 | 用途 |
+| --- | --- |
+| `jev-run "…"` | 跑一句话 |
+| `jev-ui` | 图形观察台（`127.0.0.1:8788`） |
+| `jev-browser start\|status\|stop\|restart` | 专用浏览器 |
+| `jev-selftest` | 零密钥自检整条链路；`--real-decision` 决策走真实模型 |
+| `jev-doctor` | 端点与就绪状态；`--live` 发真实探针 |
+| `jev-serve` | 本机 HTTP 接口，给别的语言调（`POST /run`） |
+
+### `jev-run` 常用参数
+
+| 参数 | 作用 |
+| --- | --- |
+| `--plan-only` | 只打印解析结果，不启浏览器、不调 API |
+| `--json` | 输出完整 JSON 结果 |
+| `--extract 路径` | 把 JSON 结果写到文件 |
+| `--steps N` | 本次动作上限（默认 `JEV_MAX_STEPS` 或 60） |
+| `--url` / `--goal` | 手动覆盖起点或目标 |
+| `--screenshots` | 循环中抓截图（观察台自动会开） |
+| `--keep-open` | 结束后不关标签页 |
+| `--launch-browser` | 没有可用浏览器时自动拉起（可配 `--headless`） |
+| `--no-preflight` | 跳过开跑前的环境检查（不推荐） |
+| `--quiet` | 不打印 stderr 进度 |
+| `--env-file` | 指定 `.env` 路径 |
+
+退出码：`0` 成功（`done`/`budget`/`stopped`）、`1` 失败（`error`/`blocked`）、`2` 环境未就绪（`setup-required`）。
+
+### 结果里几个关键字段
+
+```json
+{
+  "status": "done",
+  "steps": 2,
+  "actions": [
+    {"step": 1, "operation": "TYPE_TEXT", "action": "输入搜索词", "typed_text": "上海天气",
+     "probability": 1.0, "decided_by": "jev-1.13.0"}
+  ],
+  "text_calls": [{"field": "输入搜索词", "value": "上海天气", "model": "deepseek-v4-flash"}],
+  "page": {"url": "…", "title": "上海天气 - 搜索", "text": "…"}
+}
+```
+
+`status` 取值：`done` 完成 / `blocked` 被拦（验证码等）/ `budget` 到动作上限 / `stopped` 被手动停止 / `setup-required` 环境未就绪 / `error` 出错。
+
+---
+
+## 8. 出问题怎么查
+
+按这个顺序排查最省时间：
+
+```bash
+jev-doctor              # 配置和就绪状态，失败项自带修复命令
+jev-doctor --live       # 端点是否真的应答
+jev-browser status      # 浏览器是否可达
+jev-selftest            # 本机这一半是否正常
+jev-selftest --real-decision   # 只换决策端点为真实模型
+```
+
+### 常见症状
+
+| 症状 | 原因 | 处理 |
+| --- | --- | --- |
+| `UnicodeDecodeError: 'gbk' codec can't decode…` | 老版本在中文 Windows 下按 cp936 读文件 | 已修（所有读取显式 UTF-8）。若在别的项目复现：读文件一律给 `encoding="utf-8"` |
+| `daemon default didn't come up` | 没有可驱动的浏览器 | `jev-browser start` |
+| `browser (CDP)` 一直不可达 | 端口被别的进程占用 | 换端口：`jev-browser start --port 9444` |
+| 状态 `setup-required` | 缺密钥或浏览器不可用 | 看输出里的 `checks`，每条都带 `fix` |
+| classifier.dev 返回 403 `proxy_requires_payment` | 请求走了代理 | 去掉代理；别设 `CLASSIFIER_USE_ENV_PROXY` |
+| `HTTP 500 do_request_failed` | 网关自己的上游挂了 | 换端点；`jev-doctor --live` 复检 |
+| 百度返回「百度安全验证」 | 百度拦自动化 | 属正常，状态会是 `blocked`。换 bing/google，或用有登录态的 profile |
+| Windows 控制台中文乱码 | 控制台代码页 | `chcp 65001` 切到 UTF-8 |
+| harness 启动报错、pid 文件残留 | 上次没退干净 | 清空 `~/.config/browser-harness/runtime/` 再 `jev-browser start` |
+| `pip install` 报 `ENOSPC` | C 盘空间不足 | 先清缓存：`pip cache purge` |
+| `browser-harness` 装不上 0.1.13 | 镜像源滞后 | 加 `--mirror https://pypi.org/simple` |
+
+### 搜索引擎自动化友好度（实测）
+
+| 引擎 | 结果 |
+| --- | --- |
+| GitHub、必应、维基百科 | 可用，能跑到结果页 |
+| 搜狗 | 被拦，2 步后 `blocked` |
+| DuckDuckGo | 被拦（同意页） |
+| 百度 | 被拦（安全验证） |
+
+---
+
+## 9. 动作集
+
+模型每次只能从这 9 个里挑一个，而且只挑**页面里真实观察到的**元素。
+
+| 操作 | 含义 |
+| --- | --- |
+| `CLICK` | 点击按钮、链接、菜单项、自动补全建议、日历格子 |
+| `TYPE_TEXT` | 往可编辑字段里写内容（值由文本助手从目标里推断） |
+| `ENTER` | 在某个字段里按回车，提交它所在的表单 |
+| `SELECT` | 选中下拉框里观察到的一个值 |
+| `SCROLL_UP` / `SCROLL_DOWN` | 滚动 |
+| `WAIT` | 等页面更新 |
+| `DONE` | 目标已满足 |
+| `BLOCKED` | 所有支持的操作都无法推进 |
+
+### 为什么要单独有 `ENTER`
+
+很多表单**没有可见的提交按钮**。最典型的是必应：它的提交按钮是
+`INPUT#sb_form_go`，尺寸 **0×0 不可见**（快照按可见性把它正确过滤掉了），而肉眼看到的放大镜是个 `<label>`。这类表单靠回车提交。
+
+`ENTER` 是**带目标的操作**（回车必须落在某个具体字段上），不是全局动作。执行时会先 `focus()` 该节点、确认 `document.activeElement` 真的落在它上面，再发真实按键序列（`rawKeyDown` → `char("\r")` → `keyUp`）。
+
+> 不能用 `Input.insertText` 代替 —— 它不会触发表单提交。这个坑踩过。
+
+---
+
+## 10. 在 Python 里调用
+
+```python
+from jev_ultrafast import task
+
+result = task.run_task("bing 上海天气")
+print(result["status"], result["steps"])
+for action in result["actions"]:
+    print(action["step"], action["operation"], action["action"], action["typed_text"])
+```
+
+常用参数：
+
+```python
+task.run_task(
+    "打开 https://cn.bing.com 用搜索框搜索 上海天气 然后提交",
+    url=None,               # 覆盖起点 URL
+    goal=None,              # 覆盖目标
+    max_actions=20,         # 动作上限
+    screenshots=False,      # 循环中抓截图（给界面用）
+    keep_open=False,        # 结束后不关标签页
+    preflight=True,         # 开跑前查环境，不通过返回 status="setup-required"
+    launch_chrome=False,    # 没浏览器时自动拉起
+    on_step=None,           # 每步回调，收到完整 agent state
+)
+```
+
+只想解析、不启动任何东西：
+
+```python
+plan = task.parse_instruction("百度搜索 上海天气")
+print(plan.url, plan.goal, plan.engine, plan.query)
+```
+
+用 `on_step` 做实时观察（观察台就是这么实现的）：
+
+```python
+def on_step(state):          # state 是完整 agent state，页面在 state["page"]
+    print(state["status"], len(state["history"]), state["page"]["url"])
+
+task.run_task("bing 上海天气", on_step=on_step)
+```
+
+提前结束：在 `on_step` 里抛 `task.StopRequested`，结果状态为 `stopped`（不算错误，已有历史仍然返回）。
+
+---
+
+## 11. 开发与测试
+
+```bash
+python -m pytest -q                       # 173 项，全离线，无需浏览器和网络
+python -m ruff check .
+node --check jev_ultrafast/static/app.js
+node --check jev_ultrafast/snapshot.js
+python -X utf8=0 -c "import jev_ultrafast"   # 模拟 cmd 的 cp936，防编码回归
+```
+
+| 测试文件 | 覆盖什么 |
+| --- | --- |
+| `test_task.py` | 一句话解析与结果契约 |
+| `test_config.py` | 端点解析优先级、预设、预检 |
+| `test_classifier_backend.py` | classifier.dev 协议适配（含 label 语义、概率归一化） |
+| `test_enter_operation.py` | ENTER 动作空间、按键序列、截图容错 |
+| `test_ui.py` | 观察台 HTTP 接口、令牌、状态投影 |
+| `test_windows_encoding.py` | 用 `-X utf8=0` 子进程复现 cmd 环境 |
+| `test_preflight.py` / `test_chrome.py` / `test_selftest.py` | 预检、浏览器启停、零密钥自检 |
+
+改代码时请遵守的约定（详见 `AGENTS.md`）：
+
+- 所有端点、密钥、超时**只在 `config.py` 解析**，别在别处硬编码或直接读 `os.environ`
+- 读文件一律显式 `encoding="utf-8"`（中文 Windows 默认 cp936）
+- 失败必须可操作：`preflight()` 返回 check/ok/detail/fix，绝不允许表现为超时
+- 截图只为人服务，抓不到就算了，**不能因为截图失败中断任务**
