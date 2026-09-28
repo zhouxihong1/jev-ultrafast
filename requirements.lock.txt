@@ -1,0 +1,25 @@
+# Fully pinned dependency graph (runtime + dev tools), generated on Windows / CPython 3.13.
+# Reproduce with:  bash scripts/setup_venv.sh --exact
+# Regenerate with: python -m pip freeze | grep -v '^-e '
+anyio==4.15.1
+browser-harness==0.1.13
+cdp-use==1.4.5
+certifi==2026.7.22
+colorama==0.4.6
+fetch-use==0.4.0
+h11==0.16.0
+h2==4.4.1
+hpack==4.2.0
+httpcore==1.0.9
+httpx==0.28.1
+hyperframe==6.1.0
+idna==3.20
+iniconfig==2.3.0
+packaging==26.3
+pillow==12.3.0
+pluggy==1.6.0
+Pygments==2.21.0
+pytest==8.4.2
+ruff==0.16.9
+typing_extensions==4.16.0
+websockets==15.0.1

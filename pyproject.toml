@@ -1,6 +1,6 @@
 [project]
 name = "jev-ultrafast"
-version = "0.1.0"
+version = "0.2.0"
 description = "A browser agent that chooses instead of generating."
 readme = "README.md"
 license = "MIT"
@@ -9,6 +9,12 @@ dependencies = ["browser-harness==0.1.13", "httpx[http2]>=0.28,<1"]
 
 [project.scripts]
 jev = "jev_ultrafast.demo:main"
+jev-run = "jev_ultrafast.cli:run_main"
+jev-ui = "jev_ultrafast.cli:ui_main"
+jev-browser = "jev_ultrafast.cli:browser_main"
+jev-selftest = "jev_ultrafast.cli:selftest_main"
+jev-doctor = "jev_ultrafast.cli:doctor_main"
+jev-serve = "jev_ultrafast.cli:serve_main"
 
 [build-system]
 requires = ["hatchling"]

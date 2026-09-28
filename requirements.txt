@@ -1,0 +1,4 @@
+# Runtime dependencies only. For a byte-for-byte reproducible install use requirements.lock.txt
+# (created by: python -m pip freeze > requirements.lock.txt).
+browser-harness==0.1.13
+httpx[http2]>=0.28,<1
