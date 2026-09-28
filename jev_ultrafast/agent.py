@@ -4,9 +4,9 @@ import base64
 import time
 from pathlib import Path
 
+from . import config
 from .browser import Browser, StalePage
 from .model import action_space, choose, field_context, field_text
-from .questions import MAX_STEPS
 
 
 class Agent:
@@ -72,7 +72,7 @@ class Agent:
             state["decision"] = None
             if state["status"] in {"done", "blocked"}:
                 raise ValueError("This run has stopped. Start a fresh demo.")
-            if len(state["decisions"]) >= MAX_STEPS * 2:
+            if len(state["decisions"]) >= config.max_steps() * 2:
                 raise ValueError("Reached the demo's model-call budget")
             state["decision"] = choose(state["page"], state["goal"], state["history"])
             state["decisions"].append(
@@ -99,9 +99,9 @@ class Agent:
                 state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
                 return self.snapshot()
             action = next(a for a in page["actions"] if a["id"] == selected)
-            if len(state["history"]) >= MAX_STEPS:
+            if len(state["history"]) >= config.max_steps():
                 state["status"] = "blocked"
-                raise ValueError(f"Stopped at the {MAX_STEPS}-action demo budget")
+                raise ValueError(f"Stopped at the {config.max_steps()}-action demo budget")
             text, helper = None, None
             if action["kind"] == "fill":
                 if not state["browser"].fresh(page):
@@ -132,6 +132,7 @@ class Agent:
                     "text_latency_ms": helper["latency_ms"] if helper else 0,
                     "operation": decision["operation"],
                     "target": decision["target"],
+                    "model": decision.get("model"),
                     "page_changed": None,
                     "url": page["url"],
                     "usage": decision["usage"],
