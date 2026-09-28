@@ -76,7 +76,13 @@
       const value='value' in e ? String(e.value) :
         e.isContentEditable || rname==='combobox' ? e.innerText.trim() : '';
       actions.push({...base,kind:editable?'fill':'click',value});
-      if (editable) actions.push({...base,kind:'click',value,label:'Open '+base.label});
+      if (editable) {
+        actions.push({...base,kind:'click',value,label:'Open '+base.label});
+        // Many search boxes and login forms have no visible submit control at all: the
+        // button is 0x0 (Bing's #sb_form_go) or the visible affordance is a bare <label>.
+        // Those forms submit on Enter, so ENTER is offered for every editable field.
+        actions.push({...base,kind:'enter',value,label:base.label});
+      }
     }
   }
   const words=[], walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
