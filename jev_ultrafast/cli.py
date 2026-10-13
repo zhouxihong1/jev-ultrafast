@@ -228,7 +228,7 @@ def selftest_main(argv=None):
     parser.add_argument(
         "--real-decision",
         action="store_true",
-        help="Use the live classifier.dev model for decisions instead of the mock.",
+        help="Use the configured live decision endpoint for decisions instead of the mock.",
     )
     parser.add_argument("--env-file")
     _configure_console()

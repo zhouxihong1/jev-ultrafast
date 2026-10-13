@@ -22,6 +22,9 @@ from pathlib import Path
 
 PAGE = Path(__file__).parent / "static" / "fixture.html"
 WANTED = "Lisbon"
+# The model name the mock /v1/systemone answers with. A live-decision run asserts the
+# recorded decisions carry some other name, which is how it proves the mock was bypassed.
+MOCK_MODEL = "mock-jev"
 SEEN = {"typesafe": [], "text_model": []}
 
 
@@ -131,7 +134,7 @@ def decide(body):
     for name, ids in targets.items():
         chosen = target_index if name == target_question and target_index in ids else ids[0]
         answers[name] = pick(ids, chosen)
-    return {"model": "mock-jev", "answers": answers, "usage": {"total_tokens": 0}}
+    return {"model": MOCK_MODEL, "answers": answers, "usage": {"total_tokens": 0}}
 
 
 def _fallback(ids):
@@ -161,9 +164,11 @@ def start_mock(port=0):
 def run(launch_browser=True, headless=False, keep_open=False, echo=print, real_decision=False):
     """Point the endpoints at the mock and drive one real run. Returns (checks, result).
 
-    real_decision=True replaces the mock Jev endpoint with the live classifier.dev model while
-    keeping the local page and the stub text helper. That is how to tell which half of the
-    stack is actually at fault when a real provider misbehaves.
+    real_decision=True keeps the local page and the stub text helper but drops the mock Jev
+    endpoint, so the decisions come from whichever live endpoint the configuration already
+    names (JEV_BACKEND plus its TYPESAFE_*/CLASSIFIER_* settings). That is how to tell which
+    half of the stack is actually at fault when a real provider misbehaves, and it works
+    against any backend - the native protocol, a self-hosted gateway, or a hosted one.
     """
     import os
     import time
@@ -192,11 +197,14 @@ def run(launch_browser=True, headless=False, keep_open=False, echo=print, real_d
     marker = "selftest"
 
     if real_decision:
-        os.environ["JEV_BACKEND"] = "classifier"
-        os.environ.pop("TYPESAFE_URL", None)
-        os.environ.pop("TYPESAFE_API_KEY", None)
-        os.environ["CLASSIFIER_USE_ENV_PROXY"] = "0"
-        echo(f"decision endpoint: LIVE {config.classifier_url()}")
+        # Leave the decision endpoint exactly as configured. Hardcoding one here used to make
+        # this mode useless the moment that endpoint changed or its allowance ran out, and it
+        # silently tested a different endpoint than the one the rest of the tooling used.
+        backend = config.backend()
+        live_url = config.typesafe_url() if backend == "typesafe" else config.classifier_url()
+        if backend == "classifier":
+            os.environ.setdefault("CLASSIFIER_USE_ENV_PROXY", "0")
+        echo(f"decision endpoint: LIVE {backend} {live_url}")
     else:
         os.environ["JEV_BACKEND"] = "typesafe"
         os.environ["TYPESAFE_URL"] = f"{base}/v1/systemone"
@@ -229,8 +237,8 @@ def run(launch_browser=True, headless=False, keep_open=False, echo=print, real_d
     if real_decision:
         models = {a.get("decided_by") for a in result["actions"]}
         checks = {
-            "every decision came from the live model": bool(models)
-            and all(model and model.startswith("jev-") for model in models),
+            "decisions came from the live endpoint, not the mock": bool(models)
+            and all(model and model != MOCK_MODEL for model in models),
             **common,
         }
     else:
@@ -241,7 +249,7 @@ def run(launch_browser=True, headless=False, keep_open=False, echo=print, real_d
             **common,
         }
 
-    decision_source = "live classifier.dev" if real_decision else f"{len(SEEN['typesafe'])} mock requests"
+    decision_source = f"live {config.backend()}" if real_decision else f"{len(SEEN['typesafe'])} mock requests"
     echo(f"\nJev endpoint  : {decision_source}")
     echo(f"Text endpoint : {len(SEEN['text_model'])} mock requests")
     for name, ok in checks.items():
