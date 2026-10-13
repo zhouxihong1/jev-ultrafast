@@ -280,7 +280,9 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/":
             page = (ROOT / "static" / "ui.html").read_text(encoding="utf-8")
-            page = page.replace("__TOKEN__", TOKEN).replace("__INSTRUCTION__", html.escape(self.server.instruction))
+            page = page.replace("__TOKEN__", TOKEN).replace(
+                "__INSTRUCTION__", html.escape(getattr(self.server, "instruction", ""))
+            )
             return self._send(200, page, "text/html; charset=utf-8")
         if path == "/api/state":
             return self._json(self.manager.snapshot())

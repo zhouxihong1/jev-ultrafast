@@ -71,6 +71,19 @@ def test_a_prefilled_instruction_is_escaped_into_the_box(inspector):
     assert "&lt;script&gt;" in html and "百度搜索" in html
 
 
+def test_the_page_serves_even_when_the_server_carries_no_instruction(inspector):
+    """Embedding ui.Handler on a plain server must not require knowing about this attribute.
+
+    Reading it directly raised AttributeError and turned the page into a 500, which is a
+    confusing way to find out that serve() was the only thing that ever set it.
+    """
+    del inspector["server"].instruction
+    with urllib.request.urlopen(inspector["origin"] + "/", timeout=10) as response:  # noqa: S310
+        html = response.read().decode("utf-8")
+    assert "运行观察台" in html
+    assert "__INSTRUCTION__" not in html and "__TOKEN__" not in html
+
+
 def test_post_without_the_token_is_refused(inspector):
     with pytest.raises(urllib.error.HTTPError) as error:
         call(inspector, "POST", "/api/run", {"instruction": "百度搜索 x"}, token="wrong")
