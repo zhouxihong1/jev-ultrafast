@@ -130,6 +130,15 @@ CLASSIFIER_URL=https://classifier.dev/
 > `{"code":"proxy_requires_payment"}`。所以这个端点**故意忽略 `HTTP_PROXY`/`HTTPS_PROXY`**，
 > 除非你显式设 `CLASSIFIER_USE_ENV_PROXY=1`（那需要付费 key）。
 
+> [!WARNING]
+> **2026-10-13 实测：classifier.dev 的免密钥路径当前不可用。** 两条都要知道：
+> ① 它在 **Jev 不可用时会静默回退到一串 LLM**（看响应里的 `modelsUsed` 才知道），
+> 回退后 `scores` 只剩一个 `null`，**概率恒为 1.0**；
+> ② 匿名**共享**额度耗尽后，直连返回 `HTTP 402 {"code":"request_spending_limit"}`。
+> 端到端实测 0/3。入口是共享池，随时可能被耗尽 —— **不要把它当生产依赖**。
+> 生产或内网请走下面两种：`typesafe`（任一起到 `/v1/systemone` 的服务，含自建）
+> 或自建 classifier 兼容服务（见 3.4）。
+
 有 TypeSafe key 时：
 
 ```dotenv

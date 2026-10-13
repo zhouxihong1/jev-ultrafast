@@ -111,6 +111,9 @@ CLASSIFIER_URL=https://classifier.dev/
 
 One caveat that is not obvious: anonymous use only works over a **direct connection**. Arriving through a proxy the API answers `{"code":"proxy_requires_payment"}`, so this endpoint deliberately ignores `HTTP_PROXY`/`HTTPS_PROXY` unless `CLASSIFIER_USE_ENV_PROXY=1` is set.
 
+> [!WARNING]
+> **Measured 2026-10-13: the keyless classifier.dev path is currently unusable.** Two things to know. When Jev itself is unavailable, classifier.dev **silently falls back to a chain of LLMs** - only the response's `modelsUsed` field reveals it - and the fallback returns `scores` as a single `null`, which means **every probability reads as 1.0**. And once the anonymous **shared** allowance is spent, a direct connection answers `HTTP 402 {"code":"request_spending_limit"}`. End-to-end success measured at 0/3. It is a shared pool that anyone can drain, so do not depend on it in production. For production or an intranet, use `typesafe` (any service exposing `/v1/systemone`, including your own) or a self-hosted classifier-compatible service.
+
 The native `/v1/systemone` protocol is still supported and answers both heads in one request instead of two:
 
 ```bash
@@ -135,7 +138,7 @@ jev-doctor --live
 
 ```bash
 jev-selftest                      # both endpoints mocked: no key, no external site, no cost
-jev-selftest --real-decision      # live classifier.dev for decisions, local page + stub text helper
+jev-selftest --real-decision      # decisions from whichever live endpoint the config names
 ```
 
 `jev-selftest` starts a mock Jev endpoint, a mock text-model endpoint and a local page, then drives the real browser through type → submit → done. It starts a browser itself when none is reachable. Run it before blaming your keys: a passing run is proof that this machine's half of the stack works. `--real-decision` replaces only the decision endpoint, which is how to tell *which* half is at fault.
