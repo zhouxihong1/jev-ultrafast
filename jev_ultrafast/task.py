@@ -275,6 +275,7 @@ def run_task(
     keep_open=False,
     preflight=True,
     launch_chrome=False,
+    headless=False,
 ):
     """Run one instruction end to end and return a JSON-serialisable result.
 
@@ -284,7 +285,8 @@ def run_task(
     With ``preflight`` (the default) the environment is checked before anything is
     launched, so a missing key or an undrivable browser returns a list of fixes instead
     of a slow, opaque failure. ``launch_chrome`` starts a dedicated automation browser
-    when no CDP endpoint is configured.
+    when no CDP endpoint is configured, and ``headless`` decides whether that browser has
+    a visible window.
     """
     plan = parse_instruction(instruction, url=url, goal=goal)
     budget = max_actions or config.max_steps()
@@ -293,7 +295,7 @@ def run_task(
         try:
             from . import chrome
 
-            chrome.launch()
+            chrome.launch(headless=headless)
         except Exception:  # noqa: BLE001 - the preflight below reports the real problem
             pass
 

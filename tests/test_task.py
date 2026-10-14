@@ -2,7 +2,50 @@
 
 import pytest
 
-from jev_ultrafast import task
+from jev_ultrafast import cli, task
+
+
+def _browser_unavailable():
+    return [
+        {"check": "browser (CDP)", "ok": False, "detail": "not listening", "fix": "jev-browser start"},
+    ]
+
+
+def test_launch_chrome_forwards_headless_to_the_launcher(monkeypatch):
+    """--headless was accepted in three places and passed on in none of them.
+
+    chrome.launch() defaults to a visible window, so the documented "With --launch-browser,
+    run it headless" quietly opened a window anyway.
+    """
+    launched = {}
+    monkeypatch.setattr(task.config, "preflight", lambda probe_browser=False: _browser_unavailable())
+    monkeypatch.setattr("jev_ultrafast.chrome.launch", lambda **kw: launched.update(kw))
+
+    result = task.run_task("bing 上海天气", launch_chrome=True, headless=True)
+
+    assert launched == {"headless": True}
+    assert result["status"] == "setup-required"  # preflight still blocks, as intended
+
+
+def test_launch_chrome_defaults_to_a_visible_window(monkeypatch):
+    launched = {}
+    monkeypatch.setattr(task.config, "preflight", lambda probe_browser=False: _browser_unavailable())
+    monkeypatch.setattr("jev_ultrafast.chrome.launch", lambda **kw: launched.update(kw))
+
+    task.run_task("bing 上海天气", launch_chrome=True)
+
+    assert launched == {"headless": False}
+
+
+def test_jev_run_forwards_headless(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(task, "run_task", lambda *a, **kw: captured.update(kw) or {"status": "done"})
+
+    exit_code = cli.run_main(["bing 上海天气", "--launch-browser", "--headless", "--json", "--quiet"])
+
+    assert exit_code == 0
+    assert captured["launch_chrome"] is True
+    assert captured["headless"] is True
 
 
 def test_baidu_search_sentence_becomes_a_results_url():

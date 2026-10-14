@@ -142,6 +142,7 @@ def run_main(argv=None):
         on_step=None if args.quiet else lambda state: _on_step(state, sys.stderr, False),
         preflight=not args.no_preflight,
         launch_chrome=args.launch_browser,
+        headless=args.headless,
     )
     if args.extract:
         with open(args.extract, "w", encoding="utf-8") as handle:
@@ -329,6 +330,7 @@ def serve_main(argv=None):
                     text_limit=int(body.get("text_limit", 8000)),
                     screenshots=bool(body.get("screenshots")),
                     launch_chrome=bool(body.get("launch_browser")),
+                    headless=bool(body.get("headless")),
                 )
                 self._reply(503 if result["status"] == "setup-required" else 200, result)
             except task.InstructionError as exc:

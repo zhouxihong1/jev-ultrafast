@@ -211,6 +211,7 @@ class Manager:
                 keep_open=keep_open,
                 screenshots=True,
                 launch_chrome=self.launch_browser,
+                headless=self.headless,
                 on_step=self._on_step,
             )
         except task.InstructionError as exc:

@@ -105,6 +105,29 @@ def test_an_unparsable_instruction_is_a_400(inspector):
     assert "no keywords" in payload["error"]
 
 
+def test_the_inspector_forwards_headless_to_the_launcher(inspector, monkeypatch):
+    """`jev-ui --launch-browser --headless` used to open a visible window regardless."""
+    captured = {}
+
+    def fake_run_task(instruction, **options):
+        captured.update(options)
+        options["on_step"]({"page": None, "history": [], "text_calls": [], "decisions": [],
+                            "status": "ready", "elapsed_ms": 0, "goal": "g"})
+        return {"instruction": instruction, "plan": {}, "status": "done", "error": None,
+                "elapsed_ms": 1, "steps": 0, "actions": [], "text_calls": [],
+                "page": {"url": None, "title": None, "text": ""}}
+
+    monkeypatch.setattr(ui.task, "run_task", fake_run_task)
+    inspector["manager"].launch_browser = True
+    inspector["manager"].headless = True
+
+    call(inspector, "POST", "/api/run", {"instruction": "bing 上海天气"})
+    inspector["manager"].thread.join(timeout=5)
+
+    assert captured["launch_chrome"] is True
+    assert captured["headless"] is True
+
+
 def test_a_run_publishes_progress_and_finishes(inspector, monkeypatch):
     """The page polls /api/state, so the stubbed run must publish exactly that shape.
 
